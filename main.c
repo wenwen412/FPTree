@@ -630,6 +630,7 @@ record * find( node * root, int key, bool verbose, record * r ) {
                 if (r != NULL){
                     pfree(l->pointers[i], sizeof(record));
                     l->pointers[i] = r;
+                    break;
                 }
                 else
                     break;
@@ -745,10 +746,13 @@ node * make_leaf( void ) {
  * to find the index of the parent's pointer to
  * the node to the left of the key to be inserted.
  */
+/*FIXME: now the problem is: sometimes when leaf becomes inner node
+ * we forget to reorder the inner node*/
 int get_left_index(node * parent, node * left) {
 
     int left_index = 0;
-    while (left_index <= parent->num_keys &&
+
+    while (left_index <= order - 1 &&
            parent->pointers[left_index] != left)
         left_index++;
     return left_index;
@@ -990,7 +994,10 @@ node * insert_into_node_after_splitting(node * root, node * old_node, int left_i
     new_node->parent = old_node->parent;
     for (i = 0; i <= new_node->num_keys; i++) {
         child = new_node->pointers[i];
-        child->parent = new_node;
+        if(IS_LEAF(child))
+            LEAF_RAW(child)->parent = new_node;
+        else
+            child->parent = new_node;
     }
 
     /* Insert a new key into the parent of the two

@@ -46,11 +46,13 @@ int main( int argc, char ** argv ) {
 //        }
 
     int nums = 0;
-    while (nums<=14) {
+    while (nums<=100) {
         nums++;
             //fscanf(fp, "%d\n", &input);
-            input = nums;
+            input = rand()%100;
+
             root = insert(root, input, input);
+            //print_tree(root);
         }
         fclose(fp);
         print_tree(root);
