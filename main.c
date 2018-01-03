@@ -405,7 +405,7 @@ int find_split_key(struct leaf_node *leaf)
 
     }
     qsort (tmp_array, i, sizeof(key_index_pair),comparator);
-    int index = (int)((i - 1)/2);
+    int index = (int)(i/2);
     return tmp_array[index].key;
 }
 
@@ -421,7 +421,10 @@ int path_to_root( node * root, node * child ) {
     int length = 0;
     node * c = child;
     while (c != root) {
-        c = c->parent;
+        if(IS_LEAF(c))
+            c = (LEAF_RAW(c))->parent;
+        else
+            c = c->parent;
         length++;
     }
     return length;
@@ -455,8 +458,8 @@ void print_tree( node * root ) {
         if(IS_LEAF(n))
         {
             leaf_node *leaf_n = LEAF_RAW(n);
-            if (leaf_n->parent != NULL && n == n->parent->pointers[0]) {
-                new_rank = path_to_root( root, n );
+            if (leaf_n->parent != NULL && n == leaf_n->parent->pointers[0]) {
+                new_rank = path_to_root(root, n);
                 if (new_rank != rank) {
                     rank = new_rank;
                     printf("\n");
@@ -789,16 +792,19 @@ node * insert_into_leaf( node * l, int key, record * pointer ) {
 node * insert_into_leaf_after_splitting(node * root, node * leaf, int key, record * pointer) {
 
     node * new_leaf;
-    int * temp_keys;
-    void ** temp_pointers;
-    int insertion_index, split, new_key, i, j;
+    int  split, new_key, i;
 
     new_leaf = make_leaf();
     leaf_node *n_leaf = LEAF_RAW(new_leaf);
     leaf_node *o_leaf = LEAF_RAW(leaf);
 
-    /*FPTree: copy the whole content to the new leaf*/
-    memcpy(n_leaf, o_leaf, sizeof(leaf_node));
+    /*FPTree: copy the whole content to the new leaf
+     * Attention: do not use memcpy(n_leaf, o_leaf, sizeof(leaf_node)) to copy all the content of the leaf node
+     * Since pointers and keys are stored in a secondary array*/
+    memcpy(n_leaf->bitmap, o_leaf->bitmap, sizeof(char)*7);
+    memcpy(n_leaf->fingerprint, o_leaf->fingerprint, sizeof(char)*49);
+    memcpy(n_leaf->keys, o_leaf->keys, sizeof(int)*(order - 1));
+    memcpy(n_leaf->pointers, o_leaf->pointers, sizeof(void *)*(order - 1));
 
     /* find a split key thay evenly split keys into 2 leafs
      * small keys goes to old leaf*/
@@ -807,7 +813,7 @@ node * insert_into_leaf_after_splitting(node * root, node * leaf, int key, recor
     for (i = 0;  i <= MAX_KEYS - 1; ++ i) {
         if (bitmapGet(o_leaf->bitmap, i))
         {
-            if(o_leaf->keys[i] > split_key) {
+            if(o_leaf->keys[i] >= split_key) {
                 bitmapReset(o_leaf->bitmap, i);
                 new_leaf_num_keys++;
             }
@@ -887,8 +893,9 @@ node * insert_into_leaf_after_splitting(node * root, node * leaf, int key, recor
     for (i = new_leaf->num_keys; i < order - 1; i++)
         new_leaf->pointers[i] = NULL;
 
-    new_leaf->parent = leaf->parent;
-    new_key = new_leaf->keys[0];*/
+    new_leaf->parent = leaf->parent;*/
+    n_leaf->parent = o_leaf->parent;
+    new_key = split_key;
 
     return insert_into_parent(root, leaf, new_key, new_leaf);
 }
@@ -1005,7 +1012,10 @@ node * insert_into_parent(node * root, node * left, int key, node * right) {
     node * parent;
     // FPTree FIXME: we might have to remove parent fields of each node
     // A new way to find parent is necessary
-    parent = left->parent;
+    if(IS_LEAF(left))
+        parent = LEAF_RAW(left)->parent;
+    else
+        parent = left->parent;
 
     /* Case: new root. */
 
@@ -1049,8 +1059,16 @@ node * insert_into_new_root(node * left, int key, node * right) {
     root->pointers[1] = right;
     root->num_keys++;
     root->parent = NULL;
-    left->parent = root;
-    right->parent = root;
+    if (IS_LEAF(left)) {
+        leaf_node * left_leaf = LEAF_RAW(left);
+        leaf_node * right_leaf = LEAF_RAW(right);
+        left_leaf->parent = root;
+        right_leaf->parent = root;
+    }
+    else{
+        left->parent = root;
+        right->parent = root;
+    }
     return root;
 }
 
@@ -1356,10 +1374,11 @@ node * coalesce_nodes(node * root, node * n, node * neighbor, int neighbor_index
         leaf_neigbor->pointers[order - 1] = n->pointers[order - 1];
     }
 
-    root = delete_entry(root, n->parent, k_prime, n);
-    free(n->keys);
-    free(n->pointers);
-    free(n);
+    leaf_node *leaf_n = LEAF_RAW(n);
+    root = delete_entry(root, leaf_n->parent, k_prime, n);
+    free(leaf_n->keys);
+    free(leaf_n->pointers);
+    free(leaf_n);
     return root;
 }
 
@@ -1487,9 +1506,12 @@ node * delete_entry( node * root, node * n, int key, void * pointer ) {
     /* Case:  node stays at or above minimum.
      * (The simple case.)
      */
-
-    if (n->num_keys >= min_keys)
-        return root;
+    if(!IS_LEAF(n)){
+        if (n->num_keys >= min_keys)
+            return root;}
+    else{
+        if (LEAF_RAW(n)->num_keys >= min_keys)
+            return root; }
 
     /* Case:  node falls below minimum.
      * Either coalescence or redistribution
@@ -1505,21 +1527,33 @@ node * delete_entry( node * root, node * n, int key, void * pointer ) {
 
     neighbor_index = get_neighbor_index(n);
     k_prime_index = neighbor_index == -1 ? 0 : neighbor_index;
-    k_prime = n->parent->keys[k_prime_index];
-    neighbor = neighbor_index == -1 ? n->parent->pointers[1] :
-               n->parent->pointers[neighbor_index];
+    if(!IS_LEAF(n)){
+        k_prime = n->parent->keys[k_prime_index];
+        neighbor = neighbor_index == -1 ? n->parent->pointers[1] :
+                   n->parent->pointers[neighbor_index];
+        capacity = order - 1;
+        /* Coalescence. */
 
-    capacity = IS_LEAF(n) ? order : order - 1;
-
-    /* Coalescence. */
-
-    if (neighbor->num_keys + n->num_keys < capacity)
-        return coalesce_nodes(root, n, neighbor, neighbor_index, k_prime);
-
-        /* Redistribution. */
-
+        if (neighbor->num_keys + n->num_keys < capacity)
+            return coalesce_nodes(root, n, neighbor, neighbor_index, k_prime);
+            /* Redistribution. */
+        else
+            return redistribute_nodes(root, n, neighbor, neighbor_index, k_prime_index, k_prime);}
     else
-        return redistribute_nodes(root, n, neighbor, neighbor_index, k_prime_index, k_prime);
+    {
+        k_prime = LEAF_RAW(n)->parent->keys[k_prime_index];
+        neighbor = neighbor_index == -1 ? LEAF_RAW(n)->parent->pointers[1] :
+                   LEAF_RAW(n)->parent->pointers[neighbor_index];
+        capacity = order;
+        /* Coalescence. */
+
+        if (LEAF_RAW(neighbor)->num_keys + LEAF_RAW(n)->num_keys < capacity)
+            return coalesce_nodes(root, n, neighbor, neighbor_index, k_prime);
+            /* Redistribution. */
+        else
+            return redistribute_nodes(root, n, neighbor, neighbor_index, k_prime_index, k_prime);
+    }
+
 }
 
 

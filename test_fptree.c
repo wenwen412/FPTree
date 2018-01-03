@@ -40,8 +40,16 @@ int main( int argc, char ** argv ) {
             perror("Failure to open input file.");
             exit(EXIT_FAILURE);
         }
-        while (!feof(fp)) {
-            fscanf(fp, "%d\n", &input);
+//        while (!feof(fp)) {
+//            fscanf(fp, "%d\n", &input);
+//            root = insert(root, input, input);
+//        }
+
+    int nums = 0;
+    while (nums<=14) {
+        nums++;
+            //fscanf(fp, "%d\n", &input);
+            input = nums;
             root = insert(root, input, input);
         }
         fclose(fp);

@@ -19,7 +19,7 @@
 
 
 // Default order is 4.
-#define DEFAULT_ORDER 49
+#define DEFAULT_ORDER 5
 
 // Minimum order is necessarily 3.  We set the maximum
 // order arbitrarily.  You may change the maximum order.
