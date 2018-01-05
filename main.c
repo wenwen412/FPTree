@@ -67,14 +67,16 @@
  * This global variable is initialized to the
  * default value.
  */
+int order = DEFAULT_ORDER;
+
 
 /* The user can toggle on and off the "verbose"
  * property, which causes the pointer addresses
  * to be printed out in hexadecimal notation
  * next to their corresponding keys.
  */
-
 bool verbose_output = false;
+
 
 /* The queue is used to print the tree in
  * level order, starting from the root
@@ -83,13 +85,23 @@ bool verbose_output = false;
  */
 node * queue = NULL;
 
-/* The user can toggle on and off the "verbose"
- * property, which causes the pointer addresses
- * to be printed out in hexadecimal notation
- * next to their corresponding keys.
- */
+/*The log_head is use to locate the array of a linked list of micro_log
+ * micro_log is used when doing leaf splitting
+ * each micro_log contains 2 pointers: p_current and p_new
+ * See FPTree paper for more details*/
+micro_log * log_array;
 
-int order = DEFAULT_ORDER;
+/*micro_log operations for single thread
+ * Should change this in a multi-thread envorinment*/
+micro_log * get_log(micro_log * log_array){
+    return &(log_array[0]);
+}
+int reset_log(micro_log *log_array){
+    log_array[0].p_current = NULL;
+    log_array[0].p_new = NULL;
+    return 0;
+}
+
 
 /**********************************************************************
  * ********   pmalloc()/ pfree()/ persistent() wrap psedo code  *******
@@ -665,6 +677,7 @@ record * make_record(int value) {
     }
     else {
         new_record->value = value;
+        persistent(new_record, sizeof(record), 2);
     }
     return new_record;
 }
@@ -726,12 +739,12 @@ node * make_leaf( void ) {
     {
         l->fingerprint[i] = 0;
     }
-    l->keys = malloc( (order - 1) * sizeof(int) );
+    l->keys = pmalloc( (order - 1) * sizeof(int));
     if (l->keys == NULL) {
         perror("New node keys array.");
         exit(EXIT_FAILURE);
     }
-    l->pointers = malloc( order * sizeof(void *) );
+    l->pointers = pmalloc( order * sizeof(void *) );
     if (l->pointers == NULL) {
         perror("New node pointers array.");
         exit(EXIT_FAILURE);
@@ -782,7 +795,10 @@ node * insert_into_leaf( node * l, int key, record * pointer ) {
     leaf->keys[insertion_point] = key;
     leaf->pointers[insertion_point] = pointer;
     leaf->num_keys++;
+    persistent(&(leaf->keys[insertion_point]), sizeof(leaf->keys[insertion_point]), 2);
+    persistent(&(leaf->pointers[insertion_point]), sizeof(void *), 2);
     bitmapSet(leaf->bitmap, insertion_point);
+    persistent(leaf->bitmap, sizeof(char)*7, 2);
     return l;
 }
 
@@ -796,10 +812,15 @@ node * insert_into_leaf( node * l, int key, record * pointer ) {
 node * insert_into_leaf_after_splitting(node * root, node * leaf, int key, record * pointer) {
 
     node * new_leaf;
-    int  split, new_key, i;
+    int new_key, i;
 
     new_leaf = make_leaf();
     leaf_node *n_leaf = LEAF_RAW(new_leaf);
+
+    micro_log * ulog = get_log(log_array);
+    ulog->p_current = n_leaf;
+    persistent(&(ulog->p_current), sizeof(void *), 2);
+
     leaf_node *o_leaf = LEAF_RAW(leaf);
 
     /*FPTree: copy the whole content to the new leaf
@@ -808,7 +829,8 @@ node * insert_into_leaf_after_splitting(node * root, node * leaf, int key, recor
     memcpy(n_leaf->bitmap, o_leaf->bitmap, sizeof(char)*7);
     memcpy(n_leaf->fingerprint, o_leaf->fingerprint, sizeof(char)*49);
     memcpy(n_leaf->keys, o_leaf->keys, sizeof(int)*(order - 1));
-    memcpy(n_leaf->pointers, o_leaf->pointers, sizeof(void *)*(order - 1));
+    memcpy(n_leaf->pointers, o_leaf->pointers, sizeof(void *)*order);
+    persistent(n_leaf, sizeof(leaf_node), 2);
 
     /* find a split key thay evenly split keys into 2 leafs
      * small keys goes to old leaf*/
@@ -827,13 +849,14 @@ node * insert_into_leaf_after_splitting(node * root, node * leaf, int key, recor
         else
             printf("?");
     }
+    persistent(o_leaf->bitmap, sizeof(char)*7, 2);
     o_leaf->num_keys = old_leaf_num_keys;
     n_leaf->num_keys = new_leaf_num_keys;
     // reverse bitmap of new leaf
     for (int k = 0; k < 7; ++k) {
         n_leaf->bitmap[k] = n_leaf->bitmap[k] & (~o_leaf->bitmap[k]);
     }
-
+    persistent(n_leaf->bitmap, sizeof(char)*7, 2);
     // Insert into new or old leaf depending on the key and split key
 
     if(key >= split_key)
@@ -841,64 +864,14 @@ node * insert_into_leaf_after_splitting(node * root, node * leaf, int key, recor
     else
         insert_into_leaf(leaf, key, pointer);
 
-    /*
-     * FPTree Doesn't need this
-    temp_keys = malloc( order * sizeof(int) );
-    if (temp_keys == NULL) {
-        perror("Temporary keys array.");
-        exit(EXIT_FAILURE);
-    }
-
-    temp_pointers = malloc( order * sizeof(void *) );
-    if (temp_pointers == NULL) {
-        perror("Temporary pointers array.");
-        exit(EXIT_FAILURE);
-    }
-
-    insertion_index = 0;
-    while (insertion_index < order - 1 && leaf->keys[insertion_index] < key)
-        insertion_index++;
-
-    for (i = 0, j = 0; i < leaf->num_keys; i++, j++) {
-        if (j == insertion_index) j++;
-        temp_keys[j] = leaf->keys[i];
-        temp_pointers[j] = leaf->pointers[i];
-    }
-
-    temp_keys[insertion_index] = key;
-    temp_pointers[insertion_index] = pointer;
-
-    leaf->num_keys = 0;
-
-    split = cut(order - 1);*/
-    /*
-    for (i = 0; i < split; i++) {
-        leaf->pointers[i] = temp_pointers[i];
-        leaf->keys[i] = temp_keys[i];
-        leaf->num_keys++;
-    }
-
-    for (i = split, j = 0; i < order; i++, j++) {
-        new_leaf->pointers[j] = temp_pointers[i];
-        new_leaf->keys[j] = temp_keys[i];
-        new_leaf->num_keys++;
-    }
-    */
-    /*For FPTree, we should copy everything, they just update bitmao accordingly */
-    /*free(temp_pointers);
-    free(temp_keys);*/
-
     // linked-list operation
-    n_leaf->pointers[order - 1] = o_leaf->pointers[order - 1];
+    //n_leaf->pointers[order - 1] = o_leaf->pointers[order - 1];
     o_leaf->pointers[order - 1] = new_leaf;
+    persistent(&(o_leaf->pointers[order - 1]), sizeof(void *), 2);
 
-    /*for (i = leaf->num_keys; i < order - 1; i++)
-        leaf->pointers[i] = NULL;
-    for (i = new_leaf->num_keys; i < order - 1; i++)
-        new_leaf->pointers[i] = NULL;
-
-    new_leaf->parent = leaf->parent;*/
     n_leaf->parent = o_leaf->parent;
+    reset_log(log_array);
+
     new_key = split_key;
 
     return insert_into_parent(root, leaf, new_key, new_leaf);
@@ -1090,13 +1063,26 @@ node * start_new_tree(int key, record * pointer) {
     leaf_node * root_leaf = LEAF_RAW(root);
     root_leaf->keys[0] = key;
     root_leaf->pointers[0] = pointer;
+    persistent(&(root_leaf->keys[0]), sizeof(root_leaf->keys[0]), 2);
+    persistent(&(root_leaf->pointers[0]), sizeof(void *), 2);
     bitmapSet(root_leaf->bitmap, 0);
+    persistent(root_leaf->bitmap, sizeof(char), 2);
     for (int i = 1; i <= order - 1; ++i) {
         root_leaf->pointers[i] = NULL;
     }
 
     root_leaf->parent = NULL;
     root_leaf->num_keys++;
+
+    /*Initilize a global array for micro log
+     *Since we are testing in a single thread environment,
+     * 1 micro log is enough
+     * Change this and related code when spliting a leaf for
+     * multi-thread envorinment*/
+    log_array = pmalloc(sizeof(micro_log));
+    if (log_array == NULL)
+        return NULL;
+
     return root;
 }
 
@@ -1123,7 +1109,6 @@ node * insert( node * root, int key, int value ) {
      * duplicates.
      * FIXME: should update value
      */
-
     if (find(root, key, false, pointer) != NULL)
         return root;
 
@@ -1132,7 +1117,6 @@ node * insert( node * root, int key, int value ) {
     /* Case: the tree does not exist yet.
      * Start a new tree.
      */
-
     if (root == NULL)
         return start_new_tree(key, pointer);
 
@@ -1140,13 +1124,11 @@ node * insert( node * root, int key, int value ) {
     /* Case: the tree already exists.
      * (Rest of function body.)
      */
-
     leaf = find_leaf(root, key, false);
     leaf_node * leaf_raw = LEAF_RAW(leaf);
 
     /* Case: leaf has room for key and pointer.
      */
-
     if (leaf_raw->num_keys < order - 1) {
         leaf = insert_into_leaf(leaf, key, pointer);
         return root;
@@ -1155,7 +1137,6 @@ node * insert( node * root, int key, int value ) {
 
     /* Case:  leaf must be split.
      */
-
     return insert_into_leaf_after_splitting(root, leaf, key, pointer);
 }
 
@@ -1173,15 +1154,19 @@ node * insert( node * root, int key, int value ) {
 int get_neighbor_index( node * n ) {
 
     int i;
-
+    node * parent;
     /* Return the index of the key to the left
      * of the pointer in the parent pointing
      * to n.
      * If n is the leftmost child, this means
      * return -1.
      */
-    for (i = 0; i <= n->parent->num_keys; i++)
-        if (n->parent->pointers[i] == n)
+    if(IS_LEAF(n))
+        parent = LEAF_RAW(n)->parent;
+    else
+        parent = n->parent;
+    for (i = 0; i <= parent->num_keys; i++)
+        if (parent->pointers[i] == n)
             return i - 1;
 
     // Error state.
@@ -1200,14 +1185,12 @@ node * remove_entry_from_node(node * n, int key, node * pointer) {
     if (IS_LEAF(n))
     {
         leaf_node * leaf = LEAF_RAW(n);
-        num_pointers = n->num_keys;
         i = 0;
         while (leaf->keys[i] != key)
             i++;
         bitmapReset(leaf->bitmap, i);
-        // FPTree remove this
         // One key fewer.
-        // n->num_keys--;
+        leaf->num_keys--;
 
         return n;
     }
@@ -1545,20 +1528,32 @@ node * delete_entry( node * root, node * n, int key, void * pointer ) {
             return coalesce_nodes(root, n, neighbor, neighbor_index, k_prime);
             /* Redistribution. */
         else
-            return redistribute_nodes(root, n, neighbor, neighbor_index, k_prime_index, k_prime);}
-    else
-    {
+            return redistribute_nodes(root, n, neighbor, neighbor_index, k_prime_index, k_prime);} else{
+        /*for leaf_nodes, only delete it after no valid keys is there*/
+
+        if (LEAF_RAW(n)->num_keys == 0) {
+
+            leaf_node *leaf_n = LEAF_RAW(n);
+            neighbor = neighbor_index == -1 ? leaf_n->parent->pointers[1] : leaf_n->parent->pointers[neighbor_index];
+            k_prime = LEAF_RAW(n)->parent->keys[k_prime_index];
+            delete_entry(root, leaf_n->parent, k_prime, n);
+            LEAF_RAW(neighbor)->pointers[order - 1] = leaf_n->pointers[order - 1];
+            free(leaf_n->keys);
+            free(leaf_n->pointers);
+            free(leaf_n);
+            return root;
+        }else
+            return root;
+
+        /*
         k_prime = LEAF_RAW(n)->parent->keys[k_prime_index];
-        neighbor = neighbor_index == -1 ? LEAF_RAW(n)->parent->pointers[1] :
-                   LEAF_RAW(n)->parent->pointers[neighbor_index];
+
         capacity = order;
-        /* Coalescence. */
 
         if (LEAF_RAW(neighbor)->num_keys + LEAF_RAW(n)->num_keys < capacity)
             return coalesce_nodes(root, n, neighbor, neighbor_index, k_prime);
-            /* Redistribution. */
         else
-            return redistribute_nodes(root, n, neighbor, neighbor_index, k_prime_index, k_prime);
+            return redistribute_nodes(root, n, neighbor, neighbor_index, k_prime_index, k_prime);*/
     }
 
 }
@@ -1575,8 +1570,8 @@ record * key_record;
 key_record = find(root, key, false, NULL);
 key_leaf = find_leaf(root, key, false);
 if (key_record != NULL && key_leaf != NULL) {
-root = delete_entry(root, key_leaf, key, key_record);
-free(key_record);
+    root = delete_entry(root, key_leaf, key, key_record);
+    free(key_record);
 }
 return root;
 }
@@ -1606,5 +1601,3 @@ node * destroy_tree(node * root) {
     destroy_tree_nodes(root);
     return NULL;
 }
-
-

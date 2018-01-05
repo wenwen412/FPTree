@@ -165,3 +165,24 @@ int main(int argc, char **argv) {
 }
 
 */
+
+/*
+int len;
+char buf[512];
+FILE *f = fopen(filename, "r");
+
+uint64_t line = 1;
+start = clock();
+while (fgets(buf, sizeof buf, f)) {
+len = strlen(buf);
+buf[len-1] = '\0';
+
+art_insert(&t, (unsigned char*)buf, len, &line);
+line++;
+}
+uint64_t nlines = line - 1;
+finish = clock();
+duration = (double)(finish - start) / CLOCKS_PER_SEC;
+printf( "RART Insert spends %f seconds\n", duration );
+stats_report();
+printf( "Flush count is %d \n", extra_latency);*/

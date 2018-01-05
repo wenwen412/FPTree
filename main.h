@@ -49,7 +49,10 @@ typedef unsigned char byte;
 #define LEAF_RAW(x) ((leaf_node*)((void*)((uintptr_t)x & ~1)))
 
 
-
+typedef struct micro_log {
+    void * p_current;
+    void * p_new;
+} micro_log;
 
 #endif //FPTREE_MAIN_H
 
